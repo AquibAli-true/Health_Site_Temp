@@ -5,7 +5,7 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const isProduction= process.env.PROD_STAGE==="production";
 const {Resend} = require('resend');
-const resend =  new Resend(process.env.RESEND_KEY);
+const resend =  new Resend(process.env.RESEND_API_KEY);
 const cookie_parser= require('cookie-parser');
 
 router
