@@ -11,6 +11,7 @@ import Dashboard from './dashboard_pages/dashboard_comp/dashboard'
 import Profile from './dashboard_pages/dashboard_comp/profile'
 import OTP from './user/otp'
 import Chatbot from './dashboard_pages/dashboard_comp/chatbot'
+import Scanner from './scanner'
 
 
 function App() {
@@ -29,6 +30,7 @@ function App() {
       <Route path='/home' element={<Home/>}>
       <Route index element={<Dashboard/>}/>
       <Route path='profile' element={<Profile/>}/>
+      <Route path='scanner' element={<Scanner/>}/>
       <Route path='ai' element={<Chatbot/>}/>
       </Route>
     </Routes>

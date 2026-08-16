@@ -7,6 +7,7 @@ const authRouter=require('./auth/auth.js')
 const profileRouter=require('./profiles/profile.js')
 const dashboardModel = require('./models/dashboardModel.js')
 const dashboardRouter=require('./dashboard/dashboard.js')
+const scannerRouter = require("./dashboard/scanner.js");
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.text());
@@ -19,5 +20,6 @@ const port= 3333
 app.use('/',authRouter)
 app.use('/',profileRouter)
 app.use('/',dashboardRouter)
+app.use("/", scannerRouter);
 
 module.exports = app

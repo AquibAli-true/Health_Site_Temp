@@ -12,11 +12,14 @@
   "dependencies": {
     "@google/genai": "^2.10.0",
     "@tailwindcss/vite": "^4.3.2",
+    "html5-qrcode": "^2.3.8",
     "react": "^19.2.7",
+    "react-circular-progressbar": "^2.2.0",
     "react-dom": "^19.2.7",
     "react-hook-form": "^7.81.0",
     "react-is": "^19.2.7",
     "react-markdown": "^10.1.0",
+    "react-qr-barcode-scanner": "^2.1.28",
     "react-router-dom": "^7.18.1",
     "recharts": "^3.9.2",
     "tailwindcss": "^4.3.2"
