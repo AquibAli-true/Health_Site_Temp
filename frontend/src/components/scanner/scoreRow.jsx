@@ -1,4 +1,4 @@
-import { GRADE_STYLES, NOVA_STYLES } from "./statusColors.jsx";
+import { GRADE_STYLES, NOVA_STYLES } from "./statusColors.js";
 
 function ScoreCell({ label, children, style }) {
   return (
