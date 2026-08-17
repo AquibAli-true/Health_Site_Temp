@@ -4,8 +4,6 @@ import WeightTrend from "../../components/dashboard/WeightTrend";
 import FoodEntry from "../../components/dashboard/foodEntry";
 
 
-const UserContext = createContext();
-
 const Dashboard = () => {
   
   const [currentDate, setCurrentDate] = useState("");
@@ -49,9 +47,38 @@ const Dashboard = () => {
     }
   };
 
-  if (currentDate) {
-    initialize();
+  const initializeUserItemSubmissions = async ()=>{
+    try{
+      const response= await fetch(`${import.meta.env.VITE_SERVER}/dashboard/get_item_submissions`,{
+        method: 'POST',
+        headers: {
+          'Content-Type':'application/json',
+        },
+        body:
+          JSON.stringify({
+            currentDate,
+          })
+        
+      });
+
+      if(response.ok){
+        const data = await response.json();
+      }
+
   }
+  catch(e){
+      console.log(e);
+    }
+
+ 
+}
+ if (currentDate) {
+    initialize();
+    initializeUserItemSubmissions();
+  }
+
+
+
 }, [currentDate]);
 
   return (

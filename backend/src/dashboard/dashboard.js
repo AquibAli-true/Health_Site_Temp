@@ -316,6 +316,26 @@ router.patch("/dashboard/weight", async (req, res) => {
     catch (e) {
       return res.status(404).json({});
     }
+  }).post('/dashboard/get_item_submissions', async (req, res)=>{
+    try{
+      if(!req.body || !req.body.currentDate) return res.status(400).json({message:'incomplete data'});
+      const token = req.cookies.user_session;
+      if (!token)
+        return res.status(401).json({ message: "user_session not found" });
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await userModel.findById(decoded.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      const userEntries = await DailyLog.foodEntryModel.find({ userId: decoded.id, date: req.body.currentDate });
+      if(!userEntries) res.status(404).json({message:'entries not found'});
+      return res.status(200).json(userEntries);
+    }
+    catch(e){
+      console.log(e)
+    }
+
   })
 
 module.exports = router;

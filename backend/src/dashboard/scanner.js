@@ -9,6 +9,64 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY
 });
 
+// Helper function to handle multi-model fallback execution
+async function runAnalysis({ prompt, schema }) {
+  const modelChain = [
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+    "gemini-3-flash",
+    "gemini-3.1-flash-lite"
+  ];
+
+  const config = {
+    responseMimeType: "application/json",
+    responseSchema: schema,
+    thinkingConfig: {
+      thinkingLevel: "minimal"
+    }
+  };
+
+  let analysisResult = null;
+  let lastError = null;
+
+  for (const model of modelChain) {
+    try {
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: config
+      });
+
+      // Parse and assign to analysisResult
+      analysisResult = JSON.parse(response.text);
+      
+      // Exit loop immediately upon success
+      break;
+
+    } catch (error) {
+      const isRateLimit =
+        error?.status === 429 ||
+        error?.message?.includes("429") ||
+        error?.message?.includes("RESOURCE_EXHAUSTED");
+
+      if (isRateLimit) {
+        lastError = error;
+        continue; // Fallback to next model
+      }
+
+      // Throw non-429 errors immediately (e.g. invalid auth, schema errors)
+      throw error;
+    }
+  }
+
+  if (!analysisResult) {
+    throw new Error(
+      `All fallback models hit 429 rate limits. Last error: ${lastError?.message}`
+    );
+  }
+
+  return analysisResult;
+}
 
 router.post("/home/barcode-scanner", async (req, res) => {
   try {
@@ -24,7 +82,6 @@ router.post("/home/barcode-scanner", async (req, res) => {
         message: "Invalid barcode"
       });
     }
-
 
     // -----------------------------------
     // 2. Fetch Open Food Facts
@@ -42,22 +99,18 @@ router.post("/home/barcode-scanner", async (req, res) => {
 
     const offData = await offResponse.json();
 
-
     // -----------------------------------
     // 3. Product doesn't exist
     // -----------------------------------
 
     if (offData.status !== 1 || !offData.product) {
-
       return res.status(404).json({
         barcode,
         message: "Product not found in Open Food Facts"
       });
     }
 
-
     const product = offData.product;
-
 
     // -----------------------------------
     // 4. Normalize OFF data
@@ -88,16 +141,10 @@ router.post("/home/barcode-scanner", async (req, res) => {
       },
 
       ingredients: {
-        status: product.ingredients_text
-          ? "available"
-          : "unknown",
-
+        status: product.ingredients_text ? "available" : "unknown",
         raw_text: product.ingredients_text || null,
-
         parsed: product.ingredients || [],
-
         analysis: product.ingredients_analysis || {},
-
         analysis_tags: product.ingredients_analysis_tags || []
       },
 
@@ -105,7 +152,6 @@ router.post("/home/barcode-scanner", async (req, res) => {
         raw: product.allergens || null,
         tags: product.allergens_tags || [],
         hierarchy: product.allergens_hierarchy || [],
-
         from_user: product.allergens_from_user || null,
         from_ingredients: product.allergens_from_ingredients || null
       },
@@ -117,14 +163,12 @@ router.post("/home/barcode-scanner", async (req, res) => {
       },
 
       nutrition: {
-        status: product.nutriments &&
-          Object.keys(product.nutriments).length > 0
-          ? "available"
-          : "unknown",
-
+        status:
+          product.nutriments && Object.keys(product.nutriments).length > 0
+            ? "available"
+            : "unknown",
         data_per: product.nutrition_data_per || null,
         serving_size: product.serving_size || null,
-
         nutriments: product.nutriments || {}
       },
 
@@ -140,7 +184,6 @@ router.post("/home/barcode-scanner", async (req, res) => {
           score: product.nutriscore_score ?? null,
           version: product.nutriscore_version || null
         },
-
         ecoscore: {
           grade: product.ecoscore_grade || null,
           score: product.ecoscore_score ?? null
@@ -149,10 +192,8 @@ router.post("/home/barcode-scanner", async (req, res) => {
 
       dietary: {
         labels: product.labels_tags || [],
-
         vegan_analysis:
           product.ingredients_analysis?.["en:non-vegan"] || [],
-
         vegetarian_analysis:
           product.ingredients_analysis?.[
             "en:vegetarian-status-unknown"
@@ -162,35 +203,24 @@ router.post("/home/barcode-scanner", async (req, res) => {
       sustainability: {
         palm_oil:
           product.ingredients_analysis?.["en:palm-oil"] || [],
-
         ecoscore_data:
           product.ecoscore_data || null
       },
 
       data_quality: {
         completeness: product.completeness ?? null,
-
-        dimensions:
-          product.data_quality_dimensions || null,
-
-        warnings:
-          product.data_quality_warnings_tags || [],
-
-        info:
-          product.data_quality_info_tags || [],
-
-        states:
-          product.states_tags || []
+        dimensions: product.data_quality_dimensions || null,
+        warnings: product.data_quality_warnings_tags || [],
+        info: product.data_quality_info_tags || [],
+        states: product.states_tags || []
       }
     };
-
 
     // -----------------------------------
     // 5. Prompt
     // -----------------------------------
 
     const prompt = `
-
 You are a food product analysis engine.
 Analyze the supplied Open Food Facts product data and produce useful, human-readable information for an ordinary consumer.
 You are NOT returning the source data. The supplied Open Food Facts JSON is INPUT ONLY.
@@ -209,66 +239,27 @@ Do NOT copy, reproduce, echo, summarize, or expose:
 Instead, INTERPRET those values and express the useful meaning in clear, human-readable language.
 The final response is intended to be sent directly to a frontend.
 Every field must be useful to a consumer or to a frontend component.
-For example:
-BAD:
-"vegan-status-unknown": ["en:sugar", "en:e471", ...]
-GOOD:
-{
-  "status": "unknown",
-  "explanation": "The available ingredient information is not sufficient to confirm that this product is vegan."
-}
-BAD:
-"country_scores": {"ad": 50, "al": 50, "at": 50, ...}
-GOOD:
-{
-  "grade": "C",
-  "score": 50,
-  "explanation": "The product has a moderate environmental rating."
-}
-BAD:
-"data_quality_tags": ["en:ingredients-70-percent-unknown"]
-GOOD:
-{
-  "status": "partial",
-  "issues": [
-    "Some of the ingredient information could not be interpreted reliably."
-  ]
-}
-Clean OCR errors and remove obvious non-ingredient text such as storage instructions, preparation instructions, warnings, and other packaging text
-from the interpreted ingredient list.
+
+Clean OCR errors and remove obvious non-ingredient text such as storage instructions, preparation instructions, warnings, and other packaging text from the interpreted ingredient list.
 Do not invent missing information.
-Missing information must be represented as "unknown", null, or an empty
-collection as appropriate.
+Missing information must be represented as "unknown", null, or an empty collection as appropriate.
 Do not treat an empty source field as proof that something is absent.
 The output must be useful directly to a consumer-facing frontend.
 
 SUITABILITY RULES:
-
-good_for:
-People for whom this product appears reasonably suitable based on the
-available nutritional, ingredient and dietary information.
-
-potentially_good_for:
-People who could reasonably consider it, but where the evidence is less strong.
-
-caution_for:
-People who may want to limit or think carefully about the product because
-of known ingredients, allergens, nutrition or processing characteristics.
-
-avoid_for:
-Only use when there is a strong factual reason such as a known allergen
-or explicit incompatible dietary characteristic.
+good_for: People for whom this product appears reasonably suitable based on the available nutritional, ingredient and dietary information.
+potentially_good_for: People who could reasonably consider it, but where the evidence is less strong.
+caution_for: People who may want to limit or think carefully about the product because of known ingredients, allergens, nutrition or processing characteristics.
+avoid_for: Only use when there is a strong factual reason such as a known allergen or explicit incompatible dietary characteristic.
 
 IMPORTANT RULES:
 1. NEVER invent facts.
 2. NEVER invent nutrition values.
 3. NEVER assume a missing nutrient is zero.
 4. NEVER assume missing allergen information means allergen-free.
-5. NEVER assume an empty additives array means "no additives" unless
-   the supplied data explicitly supports that conclusion.
+5. NEVER assume an empty additives array means "no additives" unless the supplied data explicitly supports that conclusion.
 6. Use the supplied Open Food Facts data as the factual source.
-7. When information is unavailable, use "unknown" in the appropriate field
-   and explain that information is unavailable.
+7. When information is unavailable, use "unknown" in the appropriate field and explain that information is unavailable.
 8. You may interpret and explain the supplied facts.
 9. Do not make medical diagnoses.
 10. Do not claim a food is medically safe or unsafe for a disease.
@@ -276,8 +267,7 @@ IMPORTANT RULES:
 12. Make explanations understandable to normal consumers.
 13. Do not blindly label an ingredient as dangerous.
 14. Distinguish between confirmed information and uncertain information.
-15. If the data is extremely incomplete, say so clearly instead of making
-    assumptions.
+15. If the data is extremely incomplete, say so clearly instead of making assumptions.
 
 IMPORTANT:
 Do not invent medical conditions or medical advice.
@@ -287,60 +277,24 @@ Now analyze this product:
 ${JSON.stringify(foodData)}
 `;
 
-
     // -----------------------------------
-    // 6. Call Gemini
+    // 6. Call Gemini (Awaited execution)
     // -----------------------------------
 
-    const geminiResponse = await ai.models.generateContent({
-
-      model: "gemini-3.6-flash",
-
-      contents: prompt,
-
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: foodAnalysisSchema
-      }
-
+    const geminiResponse = await runAnalysis({
+      prompt: prompt,
+      schema: foodAnalysisSchema
     });
 
-
     // -----------------------------------
-    // 7. Parse Gemini JSON
-    // -----------------------------------
-
-    let analysis;
-
-    try {
-      analysis = JSON.parse(geminiResponse.text);
-    } catch (parseError) {
-
-      console.error(
-        "Gemini returned invalid JSON:",
-        geminiResponse.text
-      );
-
-      return res.status(502).json({
-        message: "Gemini returned invalid JSON"
-      });
-    }
-
-
-    // -----------------------------------
-    // 8. Return your API response
+    // 7. Return API Response
     // -----------------------------------
 
     return res.status(200).json({
-
       meta: {
         barcode,
-
         data_source: "openfoodfacts",
-
-        data_completeness:
-          product.completeness ?? null,
-
+        data_completeness: product.completeness ?? null,
         analysis_status:
           product.completeness === undefined
             ? "partial"
@@ -350,22 +304,17 @@ ${JSON.stringify(foodData)}
                 ? "partial"
                 : "complete"
       },
-
-
-      analysis
-
+      analysis: geminiResponse
     });
 
   } catch (error) {
-  console.error("Barcode scanner error:", error);
+    console.error("Barcode scanner error:", error);
 
-  return res.status(500).json({
-    message: "Failed to analyze product",
-    error: error.message,
-    stack: error.stack
-  });
-}
+    return res.status(500).json({
+      message: "Failed to analyze product",
+      error: error.message
+    });
+  }
 });
-
 
 module.exports = router;
