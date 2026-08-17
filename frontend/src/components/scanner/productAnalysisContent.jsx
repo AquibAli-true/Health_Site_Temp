@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ScoreRow } from "./ScoreRow";
+import { ScoreRow } from "./scoreRow.jsx";
 import { RATING_STYLES, DIETARY_STYLES, CONCERN_STYLES } from "./statusColors.js";
 
 // ---- small shared bits ----
