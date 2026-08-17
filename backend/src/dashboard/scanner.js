@@ -331,7 +331,7 @@ ${JSON.stringify(foodData)}
     // 8. Return your API response
     // -----------------------------------
 
-    return res.json({
+    return res.status(200).json({
 
       meta: {
         barcode,

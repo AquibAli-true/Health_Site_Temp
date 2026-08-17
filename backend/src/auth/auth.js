@@ -223,23 +223,23 @@ router
       res.status(500).json({ message: error.message });
     }
   })
-    // .get("/verify", async (req, res) => {
-    //   try {
-    //     const token = req.cookies.user_session;
-    //     if (!token) {
-    //       return res.status(401).json({ authenticated: false });
-    //     }
-    //     jwt.verify(token, process.env.JWT_SECRET)
-    //       res
-    //         .status(200)
-    //         .json({
-    //           authenticated: true,
-    //         });
+    .get("/verify", async (req, res) => {
+      try {
+        const token = req.cookies.user_session;
+        if (!token) {
+          return res.status(401).json({ authenticated: false });
+        }
+        jwt.verify(token, process.env.JWT_SECRET)
+          res
+            .status(200)
+            .json({
+              authenticated: true,
+            });
         
-    //   } catch (error) {
-    //     res.status(401).json({ message: error.message });
-    //   }
-    // })
+      } catch (error) {
+        res.status(401).json({ message: error.message });
+      }
+    })
   .post("/log-out", async (req, res) => {
     try {
       const token = req.cookies.user_session;

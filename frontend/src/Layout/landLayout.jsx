@@ -7,30 +7,30 @@ const LandLayout = () => {
     const navigate = useNavigate();
     const [checking, setChecking] = useState(true); 
 
-  // useEffect(() => {
-  //   console.log("checking auth");
-  //   const checkAuth = async () => {
-  //     try {
-  //       const response = await fetch(import.meta.env.VITE_SERVER + '/verify', {
-  //         method: 'GET',
-  //         credentials: 'include' 
-  //       });
-  //       console.log("response", response);
-  //       const result = await response.json();
-  //       if (response.ok && result.authenticated) {
-  //         navigate('/home');
-  //       } else {
-  //         setChecking(false); 
-  //       }
-  //     } catch (error) {
-  //       console.log(error);
-  //       setChecking(false);
-  //     }
-  //   };
-  //   checkAuth();
-  // }, [navigate]); 
-  // if (checking) {
-  //   return null;}
+  useEffect(() => {
+    console.log("checking auth");
+    const checkAuth = async () => {
+      try {
+        const response = await fetch(import.meta.env.VITE_SERVER + '/verify', {
+          method: 'GET',
+          credentials: 'include' 
+        });
+        console.log("response", response);
+        const result = await response.json();
+        if (response.ok && result.authenticated) {
+          navigate('/home');
+        } else {
+          setChecking(false); 
+        }
+      } catch (error) {
+        console.log(error);
+        setChecking(false);
+      }
+    };
+    checkAuth();
+  }, [navigate]); 
+  if (checking) {
+    return null;}
 
   return (
     <div >
