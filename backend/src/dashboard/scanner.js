@@ -18,11 +18,11 @@ async function runAnalysis({ prompt, schema }) {
     "gemini-3.1-flash-lite"
   ];
 
-const config = {
+  const config = {
     responseMimeType: "application/json",
     responseSchema: schema,
     thinkingConfig: {
-      thinkingBudget: 0 // Turned off thinking completely (0 tokens)
+      thinkingLevel: "minimal"
     }
   };
 
