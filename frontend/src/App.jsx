@@ -11,7 +11,7 @@ import Dashboard from './dashboard_pages/dashboard_comp/dashboard'
 import Profile from './dashboard_pages/dashboard_comp/profile'
 import OTP from './user/otp'
 import Chatbot from './dashboard_pages/dashboard_comp/chatbot'
-import Scanner from './scanner'
+import Scanner from './components/scanner/scanner.jsx'
 
 
 function App() {
