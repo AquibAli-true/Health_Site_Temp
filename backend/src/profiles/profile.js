@@ -1,14 +1,16 @@
 const express = require('express')
 const router = require("express").Router();
-const userModel = require("../models/userModel.js");
+const {userModel,f,g} = require("../models/userModel.js");
+const jwt = require("jsonwebtoken");
 
 router.get('/user-data', async (req, res) => {
     try{
         const token = req.cookies.user_session; 
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         if (!token) {
             return res.status(401).json({ authenticated: false });
         }
-        const user = await userModel.findOne({ token:token });
+        const user = await userModel.findOne({ _id:decoded.id });
         if (!user) {
             return res.status(401).json({ authenticated: false });
         }

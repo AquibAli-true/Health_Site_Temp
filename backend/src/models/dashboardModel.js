@@ -88,8 +88,7 @@ const foodEntrySchema = new mongoose.Schema({
         enum: ["breakfast", "lunch", "dinner", "snacks"],
     },
     date: {
-        type: Date,
-        default: new Date(),
+        type: "String",
         required: true
     }
 

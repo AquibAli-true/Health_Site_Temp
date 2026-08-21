@@ -24,9 +24,7 @@ export default function Profile() {
           headers: { "Content-Type": "application/json" }
         });
         const res = await response.json();
-        console.log(res);
-        console.log("show me")
-        if (response.ok && res.user) {
+        if (response.ok) {
           setUserDetails([
             { id: 'name', label: 'Name', value: res.user.name || '' },
             { id: 'email', label: 'Email', value: res.user.email || '' },

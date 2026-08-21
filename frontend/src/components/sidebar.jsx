@@ -89,8 +89,8 @@ export default function Sidebar() {
         md:translate-x-0`}
       >
         <div className="flex items-center h-24 px-8">
-          <span className="text-3xl font-semibold text-(--text-sidebar) font-arizonia tracking-widest">
-            Diet+
+          <span className="text-2xl font-semibold text-(--text-sidebar) font-arizonia tracking-widest">
+            Nutrition Nerd
           </span>
         </div>
 

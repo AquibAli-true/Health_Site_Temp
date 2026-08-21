@@ -1,19 +1,18 @@
-import { useState } from "react";
+import { useState,useEffect } from "react";
 import Loader from "../loader";
 
-const FoodEntry = () => {
+const FoodEntry = ({userEntries, setUserEntries, currentDate}) => {
   const [inputItemName, setInputItemName] = useState("");
   const [inputWeight, setInputWeight] = useState("");
   const [entryType, setEntryType] = useState("generic");
   const [searchResult, setSearchResult] = useState([]);
   const [meal, setMeal] = useState("");
   const [activeId, setActiveId] = useState("");
-  const [displayEntries, setDisplayEntries] = useState([]);
-
 
   const [status, setStatus] = useState("idle");
-  const [view, setView] = useState("search");
+  const [view, setView] = useState("entries");
   const [errorMessage, setErrorMessage] = useState("");
+
 
   const handleEntrySubmit = async (e) => {
     e.preventDefault();
@@ -59,7 +58,7 @@ const FoodEntry = () => {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ field, weight: weightAtClick }),
+          body: JSON.stringify({ field, weight: weightAtClick, currentDate:currentDate }),
           credentials: "include",
         },
       );
@@ -69,7 +68,7 @@ const FoodEntry = () => {
         setStatus("error");
         return;
       }
-      setDisplayEntries((prev) => [...prev, data]);
+      setUserEntries((prev) => [...prev, data]);
       setView("entries");
       setStatus("idle");
     } catch (err) {
@@ -160,7 +159,7 @@ const FoodEntry = () => {
           onClick={() => setView("entries")}
           className={`px-2 py-1 rounded-lg cursor-pointer ${view === "entries" ? "bg-(--accent-emerald) text-(--off-white)" : "text-[#717a8e]"}`}
         >
-          Added ({displayEntries.length})
+          Added ({userEntries.length})
         </button>
       </div>
 
@@ -218,10 +217,10 @@ const FoodEntry = () => {
               </div>
             ))
           )
-        ) : displayEntries.length === 0 ? (
+        ) : userEntries.length === 0 ? (
           <div className="text-sm text-gray-400 font-nunito m-auto">Nothing added yet today.</div>
         ) : (
-          displayEntries.map((field, id) => (
+          userEntries.map((field, id) => (
             <div
               key={field._id ?? id}
               className="relative hover:border text-gray-900 font-nunito hover:border-[#10b981] bg-[#f0f5f2] rounded-lg p-2 flex items-center justify-between gap-2"

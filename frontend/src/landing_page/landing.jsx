@@ -10,11 +10,6 @@ const Landing = () => {
   return (
     <>
     <Hero/>
-    <NutritionCardA/>
-    <NutritionCardB/>
-    <NutritionCardC/>
-    <ImgCard/>
-    <Footer/>
     </>
   )
 }

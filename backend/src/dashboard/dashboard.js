@@ -29,12 +29,13 @@ const calculateTotals = (meals) => {
   return { totalCalories, totalProtein };
 };
 
-router.patch("/dashboard/weight", async (req, res) => {
+router.patch("/dashboard/set-weight", async (req, res) => {
   try {
     const token = req.cookies.user_session;
     if (!token) return res.status(401).json({ message: "Not authenticated" });
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const user = await userModel.findOne({ token: token });
+    const user = await userModel.findOne({ _id:decoded.id });
     if (!user) return res.status(401).json({ message: "Invalid session" });
 
     const { date, weight } = req.body;
@@ -92,8 +93,7 @@ router.patch("/dashboard/weight", async (req, res) => {
   }
 })
 
-
-  .post("/dashboard/food-entry/search", async (req, res) => {
+.post("/dashboard/food-entry/search", async (req, res) => {
     try {
       if (!req.query.q)
         return res.status(400).json({ message: "Please enter a valid item." });
@@ -184,22 +184,17 @@ router.patch("/dashboard/weight", async (req, res) => {
       console.log(e);
       return res.status(400).json({ message: "Internal Server Error" });
     }
-  }).post('/dashboard/food-entry/save-item', async (req, res) => {
+  })
+  .post('/dashboard/food-entry/save-item', async (req, res) => {
     try {
-      if (!req.body || !req.body.weight || !req.body?.field) return res.status(400).json({ message: 'invalid entry' });
+      if (!req.body || !req.body.weight || !req.body?.currentDate || !req.body?.field) return res.status(400).json({ message: 'invalid entry' });
             const token = req.cookies.user_session;
       if (!token)
         return res.status(401).json({ message: "user_session not found" });
 
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-      const today = new Date();
-      const dateString =
-        today.getFullYear() +
-        "-" +
-        String(today.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(today.getDate()).padStart(2, "0");
+      const dateString = req.body.currentDate;
 
       const usdaId = req.body.field.itemId;
       let defaultItemWeight = 0;
@@ -212,7 +207,6 @@ router.patch("/dashboard/weight", async (req, res) => {
           }
 
           const food = await response.json();
-
           const weight = food.foodPortions?.find(
             p => p.gramWeight != null
           )?.gramWeight ?? null;
@@ -247,13 +241,14 @@ router.patch("/dashboard/weight", async (req, res) => {
       })
 
       return res.status(200).json(entryObject);
+      
     }
     catch (e) {
       console.log(e)
       return res.status(409).json({ message: 'something went wrong' })
     }
 
-  }).post('/dashboard/initialize-page', async (req, res) => {
+  }).post('/dashboard/initialize-daily-bars', async (req, res) => {
     try {
       if (!req.body || !req.body.currentDate) return res.status(400).json({ message: 'Incorrect Request' });
       const token = req.cookies.user_session;
@@ -298,6 +293,7 @@ router.patch("/dashboard/weight", async (req, res) => {
         totalDailyCarbs += (item.itemWeight / 100) * item.nutrition.itemCarbs;
         totalDailyFats += (item.itemWeight / 100) * item.nutrition.itemFats;
       });
+      console.log(userEntries)
 
 
       return res.status(200).json({

@@ -298,7 +298,7 @@ ${JSON.stringify(foodData)}
         analysis_status:
           product.completeness === undefined
             ? "partial"
-            : product.completeness < 0.4
+            : product.completeness < 0.1
               ? "insufficient_data"
               : product.completeness < 0.8
                 ? "partial"
