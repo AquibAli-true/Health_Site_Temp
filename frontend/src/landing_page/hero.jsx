@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import heroImg from '../assets/image/healthyPlate.jpg';
+
 
 const Hero = () => {
   return (
@@ -25,11 +25,7 @@ const Hero = () => {
       </div>
 
       <div className="w-full sm:w-[80%] md:w-[60%] lg:w-1/2 flex justify-center items-center">
-        <img 
-          src={heroImg} 
-          alt="Nutrition tracking preview" 
-          className="w-[70%] bg-none h-auto object-cover rounded-4xl shadow-2xl"
-        />
+
       </div>
 
     </div>
