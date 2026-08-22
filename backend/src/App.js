@@ -8,6 +8,8 @@ const profileRouter=require('./profiles/profile.js')
 const dashboardModel = require('./models/dashboardModel.js')
 const dashboardRouter=require('./dashboard/dashboard.js')
 const scannerRouter = require("./dashboard/scanner.js");
+const foodScannerRouter = require("./dashboard/foodScanner.js");
+const weightRouter = require("./dashboard/weight.js");
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.text());
@@ -21,5 +23,7 @@ app.use('/',authRouter)
 app.use('/',profileRouter)
 app.use('/',dashboardRouter)
 app.use("/", scannerRouter);
+app.use("/", foodScannerRouter);
+app.use("/", weightRouter);
 
 module.exports = app

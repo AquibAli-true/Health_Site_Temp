@@ -11,6 +11,8 @@ const Dashboard = () => {
   const [isTargetOpen, setIsTargetOpen] = useState(false);
   const [dailyUserData, setDailyUserData] = useState({});
   const [foodEntries,setFoodEntries] = useState([]);
+  const [changedBarData, setChangedBarData] = useState(0);
+  const [weightHistory, setWeightHistory] = useState([]);
 
   useEffect(() => {
     const today = new Date();
@@ -58,7 +60,7 @@ const Dashboard = () => {
 
 
 
-}, [currentDate]);
+}, [currentDate, changedBarData]);
 
 
 useEffect(() => {
@@ -96,9 +98,67 @@ useEffect(() => {
 }, [currentDate,foodEntries]);
 
 
+  // Weight history is not scoped to currentDate — it's a rolling trend,
+  // not a per-day lookup like foodEntries/dailyUserData — so it fetches
+  // once on mount rather than joining the currentDate-dependent effects above.
+  useEffect(() => {
+    const initializeWeightHistory = async () => {
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_SERVER}/dashboard/weight-history`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            credentials: "include",
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          setWeightHistory(data);
+        }
+      } catch (e) {
+        console.log(e);
+      }
+    };
+
+    initializeWeightHistory();
+  }, []);
+
+  const handleLogWeight = async (entry) => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_SERVER}/dashboard/log-weight`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(entry),
+          credentials: "include",
+        }
+      );
+
+      if (response.ok) {
+        const saved = await response.json();
+        // upsert semantics on the backend: same-day log overwrites the
+        // existing entry instead of appending a duplicate point
+        setWeightHistory((prev) => {
+          const withoutToday = prev.filter((e) => e.date !== saved.date);
+          return [...withoutToday, saved];
+        });
+      }
+    } catch (e) {
+      console.log(e);
+    }
+  };
+
+
   return (
     <div className="flex h-screen bg-(--bg-main) relative">
-      <TargetModal isOpen={isTargetOpen} setIsOpen={setIsTargetOpen} />
+      <TargetModal isOpen={isTargetOpen} setChangedBarData={setChangedBarData} setIsOpen={setIsTargetOpen} currentDate={currentDate} />
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         <div className="flex-1 flex flex-col overflow-y-auto p-4 pt-16 lg:p-8 lg:pt-8 lg:border-r border-gray-200">
           <div className="flex mb-8 justify-between">
@@ -121,7 +181,7 @@ useEffect(() => {
           </div>
 
           <div className="h-64 shrink-0 mb-8 lg:mb-0">
-            <WeightTrend />
+            <WeightTrend data={weightHistory} onLogWeight={handleLogWeight} />
           </div>
         </div>
 

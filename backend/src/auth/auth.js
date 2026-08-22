@@ -167,12 +167,13 @@ router
       otpObj.otp=hashedOtp;
       otpObj.expiresAt=new Date(Date.now()+ 10*60*1000);
       await otpObj.save();
-      await resend.emails.send({
+      const result= await resend.emails.send({
         from: "onboarding@resend.dev",
         to: otpObj.email,
         subject: "OTP",
         html: `<p>This is your OTP : ${validOtp}.</p>`,
       });
+      console.log("RESEND:", result);
       res.status(200).send();
     }
     catch(err){

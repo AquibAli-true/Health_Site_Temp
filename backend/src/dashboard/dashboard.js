@@ -29,71 +29,7 @@ const calculateTotals = (meals) => {
   return { totalCalories, totalProtein };
 };
 
-router.patch("/dashboard/set-weight", async (req, res) => {
-  try {
-    const token = req.cookies.user_session;
-    if (!token) return res.status(401).json({ message: "Not authenticated" });
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-    const user = await userModel.findOne({ _id:decoded.id });
-    if (!user) return res.status(401).json({ message: "Invalid session" });
-
-    const { date, weight } = req.body;
-
-    if (!date || weight === undefined) {
-      return res
-        .status(400)
-        .json({ message: "date and weight are required" });
-    }
-
-    const weightNum = Number(weight);
-    if (isNaN(weightNum) || weightNum <= 0) {
-      return res
-        .status(400)
-        .json({ message: "weight must be a positive number" });
-    }
-    let dailyLog = await DailyLog.findOne({ user: user._id, date: date });
-
-    if (!dailyLog) {
-      let bmr = 10 * user.weight + 6.25 * user.height - 5 * user.age;
-      bmr += user.sex === "male" ? 5 : -161;
-      const maintenanceCalories = Math.round(bmr * 1.2);
-      const maintenanceProtein = Math.round((maintenanceCalories * 0.3) / 4);
-
-      dailyLog = await DailyLog.create({
-        user: user._id,
-        date: date,
-        targetCalories: maintenanceCalories,
-        targetProtein: maintenanceProtein,
-        loggedWeight: weightNum,
-        meals: { breakfast: [], lunch: [], dinner: [], snacks: [] },
-      });
-    } else {
-      dailyLog.loggedWeight = weightNum;
-      await dailyLog.save();
-    }
-
-    const mostRecentLog = await DailyLog.findOne({
-      user: user._id,
-      loggedWeight: { $exists: true, $ne: null },
-    }).sort({ date: -1 });
-
-    if (mostRecentLog) {
-      await userModel.findByIdAndUpdate(user._id, {
-        weight: mostRecentLog.loggedWeight,
-      });
-    }
-
-    res
-      .status(200)
-      .json({ date: dailyLog.date, loggedWeight: dailyLog.loggedWeight });
-  } catch (error) {
-    console.error("Log Weight Error:", error);
-    res.status(500).json({ message: error.message });
-  }
-})
-
-.post("/dashboard/food-entry/search", async (req, res) => {
+router.post("/dashboard/food-entry/search", async (req, res) => {
     try {
       if (!req.query.q)
         return res.status(400).json({ message: "Please enter a valid item." });
@@ -278,7 +214,7 @@ router.patch("/dashboard/set-weight", async (req, res) => {
       }
       else {
         dailyTargetCalories = dailyTarget.dailyTargetCalories;
-        dailyTargetProteins = dailyTarget.dailyTargetProtein;
+        dailyTargetProteins = dailyTarget.dailyTargetProteins;
         dailyTargetCarbs = dailyTarget.dailyTargetCarbs;
         dailyTargetFats = dailyTarget.dailyTargetFats;
       }
@@ -332,6 +268,48 @@ router.patch("/dashboard/set-weight", async (req, res) => {
       console.log(e)
     }
 
+  }).post('/dashboard/set-target', async (req,res)=>{
+    try{
+      if(!req.body || !req.body.currentDate) return res.status(400).json({message:'incomplete data'});
+      const token = req.cookies.user_session;
+      if (!token)
+        return res.status(401).json({ message: "user_session not found" });
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await userModel.findById(decoded.id);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      if(!(await DailyLog.dailyTargetModel.exists({userId:decoded.id, date: req.body.currentDate}))){
+        const newDailyTargetModel= await DailyLog.dailyTargetModel.create({
+          dailyTargetCalories:req.body.calories,
+          dailyTargetProteins: req.body.proteins,
+          dailyTargetFats: req.body.fats,
+          dailyTargetCarbs: req.body.carbs,
+          userId: decoded.id,
+          date:req.body.currentDate
+        })
+        console.log(newDailyTargetModel)
+        if(newDailyTargetModel) return res.status(200).json({message:'model created'})
+      }
+      else{
+        const updatedData= await DailyLog.dailyTargetModel.updateOne({userId:decoded.id,date:req.body.currentDate},{
+          $set:{
+          dailyTargetCalories:req.body.calories,
+          dailyTargetProteins: req.body.proteins,
+          dailyTargetFats: req.body.fats,
+          dailyTargetCarbs: req.body.carbs
+          }
+        })
+        console.log(updatedData)
+        if(updatedData.matchedCount > 0) return res.status(200).json({message:'targets updated'})
+      }
+    }
+    catch(e){
+      console.log(e);
+      return res.status(500).json({message:'Some error occured'});
+      
+    }
   })
 
 module.exports = router;
