@@ -74,9 +74,13 @@ const Scanner = () => {
           }
         );
 
-        if (!res.ok) {
-          throw new Error(`Request failed (${res.status})`);
-        }
+const body = await res.text();
+
+if (!res.ok) {
+  throw new Error(`Request failed (${res.status}): ${body}`);
+}
+
+const dataErr = JSON.parse(body);
 
         const data = await res.json();
 
