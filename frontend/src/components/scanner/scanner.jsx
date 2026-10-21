@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Html5Qrcode } from "html5-qrcode";
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { ProductAnalysisView } from "./productAnalysisView.jsx";
 import FoodScanner from "./foodScanner.jsx";
 import { FoodAnalysisView } from "./foodAnalysisView.jsx";
@@ -20,59 +20,71 @@ const Scanner = () => {
   // ------------------------------------------------------------
   // Barcode camera: starts only when the user presses Start scanning.
   // ------------------------------------------------------------
+useEffect(() => {
+  if (mode !== "barcode" || !scannerActive) return;
 
-  useEffect(() => {
-    if (mode !== "barcode" || !scannerActive) return;
+  const html5Qrcode = new Html5Qrcode(readerId, {
+    formatsToSupport: [
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.ITF,
+    ],
+  });
 
-    const html5Qrcode = new Html5Qrcode(readerId);
-    let cancelled = false;
-    let decoded = false;
+  let cancelled = false;
+  let decoded = false;
 
-    // The cleanup waits for startup to settle before stopping the camera.
-    const startPromise = html5Qrcode
-      .start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 120 } },
-        (decodedText) => {
-          if (cancelled || decoded) return;
+  const startPromise = html5Qrcode
+    .start(
+      { facingMode: "environment" },
+      {
+        fps: 15,
+        disableFlip: true,
+      },
+      (decodedText) => {
+        if (cancelled || decoded) return;
 
-          decoded = true;
-          setBarcodeValue(decodedText);
-          setScannerActive(false);
-        },
-        () => {
-          // Per-frame "not found" errors are expected; ignore them.
-        }
-      )
-      .catch((err) => {
-        if (cancelled) return;
-
-        setError(
-          `Camera failed to start: ${err?.message || String(err)}`
-        );
+        decoded = true;
+        setBarcodeValue(decodedText);
         setScannerActive(false);
-      });
+      },
+      () => {
+        // An undecodable video frame is normal; keep scanning.
+      }
+    )
+    .catch((err) => {
+      if (cancelled) return;
 
-    return () => {
-      cancelled = true;
+      setError(
+        `Camera failed to start: ${err?.message || String(err)}`
+      );
+      setScannerActive(false);
+    });
 
-      startPromise.then(async () => {
-        try {
-          if (html5Qrcode.isScanning) {
-            await html5Qrcode.stop();
-          }
-        } catch {
-          // The camera may already have stopped.
+  return () => {
+    cancelled = true;
+
+    startPromise.then(async () => {
+      try {
+        if (html5Qrcode.isScanning) {
+          await html5Qrcode.stop();
         }
+      } catch {
+        // Scanner may already be stopped.
+      }
 
-        try {
-          html5Qrcode.clear();
-        } catch {
-          // The reader element may already have been removed.
-        }
-      });
-    };
-  }, [mode, scannerActive]);
+      try {
+        html5Qrcode.clear();
+      } catch {
+        // Reader element may already be removed.
+      }
+    });
+  };
+}, [mode, scannerActive]);
 
   // ------------------------------------------------------------
   // Barcode analysis
