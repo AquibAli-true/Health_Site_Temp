@@ -26,46 +26,32 @@ async function runAnalysis({ prompt, schema }) {
     }
   };
 
-  let analysisResult = null;
-  let lastError = null;
+  const errors = [];
 
   for (const model of modelChain) {
     try {
       const response = await ai.models.generateContent({
-        model: model,
+        model,
         contents: prompt,
-        config: config
+        config
       });
 
-      // Parse and assign to analysisResult
-      analysisResult = JSON.parse(response.text);
-      
-      // Exit loop immediately upon success
-      break;
-
+      return JSON.parse(response.text);
     } catch (error) {
-      const isRateLimit =
-        error?.status === 429 ||
-        error?.message?.includes("429") ||
-        error?.message?.includes("RESOURCE_EXHAUSTED");
+      const message = error?.message || String(error);
 
-      if (isRateLimit) {
-        lastError = error;
-        continue; // Fallback to next model
-      }
+      errors.push(`${model}: ${message}`);
 
-      // Throw non-429 errors immediately (e.g. invalid auth, schema errors)
-      throw error;
+      console.error(
+        `Gemini model ${model} failed. Trying the next model.`,
+        error
+      );
     }
   }
 
-  if (!analysisResult) {
-    throw new Error(
-      `All fallback models hit 429 rate limits. Last error: ${lastError?.message}`
-    );
-  }
-
-  return analysisResult;
+  throw new Error(
+    `All Gemini models failed:\n${errors.join("\n")}`
+  );
 }
 
 router.post("/home/barcode-scanner", async (req, res) => {
