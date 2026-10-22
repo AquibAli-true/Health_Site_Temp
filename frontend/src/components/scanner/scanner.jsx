@@ -1,192 +1,407 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { ProductAnalysisView } from "./productAnalysisView.jsx";
 import FoodScanner from "./foodScanner.jsx";
 import { FoodAnalysisView } from "./foodAnalysisView.jsx";
 
+// ------------------------------------------------------------
+// Flow
+//   menu  -> tap "Scan barcode" -> camera starts immediately
+//         -> first successful decode stops the camera
+//         -> POST to the server -> result view
+//   menu  -> tap "Scan food"    -> FoodScanner (does its own request)
+//
+// analysisState: "idle" | "loading" | "success" | "error"
+//   - barcode mode + "idle" means "camera should be running"
+//   - food mode    + "idle" means "FoodScanner should be mounted"
+// ------------------------------------------------------------
+
+const READER_ID = "barcode-reader";
+const API_BASE = (import.meta.env.VITE_SERVER || "").replace(/\/+$/, "");
+
+// Packaged food only uses EAN/UPC. Fewer formats = faster frames, fewer misreads.
+const BARCODE_FORMATS = [
+  Html5QrcodeSupportedFormats.EAN_13,
+  Html5QrcodeSupportedFormats.EAN_8,
+  Html5QrcodeSupportedFormats.UPC_A,
+  Html5QrcodeSupportedFormats.UPC_E,
+];
+
+// Wide, short strip: 1D barcodes only need a horizontal scan line.
+const getScanBox = (viewfinderWidth, viewfinderHeight) => {
+  const width = Math.max(50, Math.floor(viewfinderWidth * 0.9));
+  const height = Math.max(
+    50,
+    Math.floor(Math.min(viewfinderHeight * 0.45, width * 0.5))
+  );
+  return { width, height };
+};
+
+// ------------------------------------------------------------
+// Helpers
+// ------------------------------------------------------------
+
+function describeCameraError(err) {
+  const raw = typeof err === "string" ? err : err?.message || "";
+  const name = err?.name || "";
+
+  if (!window.isSecureContext) {
+    return "The camera only works over HTTPS (or localhost). Open the app through a secure URL.";
+  }
+  if (name === "NotAllowedError" || /permission|denied|notallowed/i.test(raw)) {
+    return "Camera permission was denied. Allow camera access in your browser settings, then try again.";
+  }
+  if (name === "NotFoundError" || /notfound|no camera/i.test(raw)) {
+    return "No camera was found on this device.";
+  }
+  if (name === "NotReadableError" || /notreadable|in use/i.test(raw)) {
+    return "The camera is being used by another app or tab. Close it and try again.";
+  }
+  return `Camera failed to start${raw ? `: ${raw}` : "."}`;
+}
+
+// Best effort: continuous autofocus makes close-up barcodes decode far faster.
+// Done on the track directly because html5-qrcode validates videoConstraints
+// keys and may reject `advanced`.
+async function enableContinuousFocus(videoEl) {
+  try {
+    const track = videoEl?.srcObject?.getVideoTracks?.()[0];
+    const capabilities = track?.getCapabilities?.();
+    if (capabilities?.focusMode?.includes("continuous")) {
+      await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+    }
+  } catch {
+    // Unsupported on this device; scanning still works.
+  }
+}
+
+// Never rejects. Also releases the camera tracks directly so the camera
+// light can't stay on if stop() throws.
+async function shutDownScanner(scanner, videoEl) {
+  try {
+    await scanner.stop();
+  } catch {
+    // Not running (failed to start, or already stopped).
+  }
+  try {
+    scanner.clear();
+  } catch {
+    // Reader element may already be gone.
+  }
+  try {
+    videoEl?.srcObject?.getTracks().forEach((track) => track.stop());
+  } catch {
+    // Already released.
+  }
+}
+
+async function postBarcode(barcodeValue, signal) {
+  const res = await fetch(`${API_BASE}/home/barcode-scanner`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ barcodeValue }),
+    signal,
+  });
+
+  const text = await res.text();
+  let data = null;
+  let isJson = false;
+
+  try {
+    data = JSON.parse(text);
+    isJson = true;
+  } catch {
+    // Not JSON; handled below.
+  }
+
+  if (!res.ok) {
+    if (isJson) {
+      const message = data?.message || "Barcode request failed";
+      const detail = data?.error;
+      throw new Error(
+        `${message} (HTTP ${res.status})${detail ? `: ${detail}` : ""}`
+      );
+    }
+
+    const preview = text
+      .replace(/<[^>]*>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 250);
+
+    throw new Error(
+      preview
+        ? `Barcode request failed (HTTP ${res.status}): ${preview}`
+        : `Barcode request failed (HTTP ${res.status}): the server returned an empty response.`
+    );
+  }
+
+  if (!isJson) {
+    throw new Error("The server returned an invalid response instead of JSON.");
+  }
+
+  return data;
+}
+
+// ------------------------------------------------------------
+// Small presentational pieces
+// ------------------------------------------------------------
+
+const BARS = [
+  [2, 2, 0.55],
+  [6, 1, 0.4],
+  [9, 3, 0.6],
+  [14, 1, 0.35],
+  [17, 2, 0.55],
+  [21, 1, 0.4],
+  [24, 3, 0.6],
+  [29, 1, 0.4],
+];
+
+function BarcodeIcon() {
+  return (
+    <svg width="32" height="32" viewBox="0 0 34 34" aria-hidden="true">
+      {BARS.map(([x, width, opacity]) => (
+        <rect
+          key={x}
+          x={x}
+          y="4"
+          width={width}
+          height="26"
+          fill="#1F2A24"
+          opacity={opacity}
+        />
+      ))}
+    </svg>
+  );
+}
+
+const FRAME_CORNERS = [
+  "M14 16v-2a4 4 0 0 1 4-4h2",
+  "M42 16v-2a4 4 0 0 0-4-4h-2",
+  "M14 40v2a4 4 0 0 0 4 4h2",
+  "M42 40v2a4 4 0 0 1-4 4h-2",
+];
+
+function FrameIcon() {
+  return (
+    <svg
+      width="52"
+      height="52"
+      viewBox="0 0 56 56"
+      className="animate-[framePulse_2.4s_ease-in-out_infinite]"
+      aria-hidden="true"
+    >
+      {FRAME_CORNERS.map((d) => (
+        <path
+          key={d}
+          d={d}
+          stroke="#E8735C"
+          strokeWidth="2.5"
+          fill="none"
+          strokeLinecap="round"
+        />
+      ))}
+      <circle
+        cx="28"
+        cy="28"
+        r="7"
+        fill="none"
+        stroke="#1F2A24"
+        strokeWidth="2"
+        opacity="0.5"
+      />
+    </svg>
+  );
+}
+
+function ErrorPanel({ message, onRetry, onCancel }) {
+  return (
+    <div
+      role="alert"
+      className="flex max-w-sm flex-col items-center gap-3 text-center"
+    >
+      <p className="font-poppins text-sm text-red-600">{message}</p>
+
+      <div className="flex items-center gap-4">
+        <button
+          type="button"
+          onClick={onRetry}
+          className="cursor-pointer rounded-md bg-(--accent-coral) px-4 py-2 font-poppins font-medium text-white"
+        >
+          Try again
+        </button>
+
+        <button
+          type="button"
+          onClick={onCancel}
+          className="cursor-pointer font-poppins text-sm underline"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const MODE_CARD_CLASS =
+  "flex w-full cursor-pointer items-center gap-[14px] rounded-2xl border-0 bg-(--bg-card-subtle) p-4 text-left";
+
+// ------------------------------------------------------------
+// Scanner
+// ------------------------------------------------------------
+
 const Scanner = () => {
   const [mode, setMode] = useState(null); // null | "barcode" | "food"
   const [barcodeValue, setBarcodeValue] = useState(null);
-  const [error, setError] = useState(null);
-
-  // analysisState: "idle" | "loading" | "success" | "error"
-  // Shared shape for both barcode and food.
   const [analysisState, setAnalysisState] = useState("idle");
   const [analysisResult, setAnalysisResult] = useState(null);
+  const [error, setError] = useState(null);
+  const [cameraReady, setCameraReady] = useState(false);
 
-  const [scannerActive, setScannerActive] = useState(false);
-  const readerId = "barcode-reader";
+  // Each camera teardown is chained here so the next camera start always
+  // waits for the previous one to fully stop (prevents two Html5Qrcode
+  // instances fighting over the same #barcode-reader element).
+  const teardownRef = useRef(Promise.resolve());
 
-  // ------------------------------------------------------------
-  // Barcode camera: starts only when the user presses Start scanning.
-  // ------------------------------------------------------------
-useEffect(() => {
-  if (mode !== "barcode" || !scannerActive) return;
-
-  const html5Qrcode = new Html5Qrcode(readerId, {
-    formatsToSupport: [
-      Html5QrcodeSupportedFormats.EAN_13,
-      Html5QrcodeSupportedFormats.EAN_8,
-      Html5QrcodeSupportedFormats.UPC_A,
-      Html5QrcodeSupportedFormats.UPC_E,
-      Html5QrcodeSupportedFormats.CODE_128,
-      Html5QrcodeSupportedFormats.CODE_39,
-      Html5QrcodeSupportedFormats.ITF,
-    ],
-  });
-
-  let cancelled = false;
-  let decoded = false;
-
-  const startPromise = html5Qrcode
-    .start(
-      { facingMode: "environment" },
-      {
-        fps: 15,
-        disableFlip: true,
-      },
-      (decodedText) => {
-        if (cancelled || decoded) return;
-
-        decoded = true;
-        setBarcodeValue(decodedText);
-        setScannerActive(false);
-      },
-      () => {
-        // An undecodable video frame is normal; keep scanning.
-      }
-    )
-    .catch((err) => {
-      if (cancelled) return;
-
-      setError(
-        `Camera failed to start: ${err?.message || String(err)}`
-      );
-      setScannerActive(false);
-    });
-
-  return () => {
-    cancelled = true;
-
-    startPromise.then(async () => {
-      try {
-        if (html5Qrcode.isScanning) {
-          await html5Qrcode.stop();
-        }
-      } catch {
-        // Scanner may already be stopped.
-      }
-
-      try {
-        html5Qrcode.clear();
-      } catch {
-        // Reader element may already be removed.
-      }
-    });
-  };
-}, [mode, scannerActive]);
+  const isScanning = mode === "barcode" && analysisState === "idle";
 
   // ------------------------------------------------------------
-  // Barcode analysis
+  // Camera: runs while isScanning is true, stops the moment it turns false
+  // (successful scan, error, cancel, or leaving the page).
   // ------------------------------------------------------------
-
   useEffect(() => {
-    if (!barcodeValue) return;
+    if (!isScanning) return;
 
     let cancelled = false;
+    let scanner = null;
+    let videoEl = null;
 
-    async function analyze() {
-      setAnalysisState("loading");
-      setAnalysisResult(null);
+    setCameraReady(false);
+
+    const run = teardownRef.current.then(async () => {
+      if (cancelled) return;
 
       try {
-        const res = await fetch(
-          `${import.meta.env.VITE_SERVER}/home/barcode-scanner`,
+        scanner = new Html5Qrcode(READER_ID, {
+          formatsToSupport: BARCODE_FORMATS,
+          // Native BarcodeDetector where available (Chrome/Android);
+          // falls back to the JS decoder elsewhere.
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+          verbose: false,
+        });
+
+        let decoded = false;
+
+        await scanner.start(
+          { facingMode: "environment" },
           {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
+            fps: 10,
+            disableFlip: true,
+            qrbox: getScanBox,
+            videoConstraints: {
+              facingMode: "environment",
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
             },
-            body: JSON.stringify({ barcodeValue }),
+          },
+          (decodedText) => {
+            if (cancelled || decoded) return;
+            decoded = true;
+
+            // Set both together so there is no blank frame between
+            // "camera closed" and "analyzing".
+            setBarcodeValue(decodedText);
+            setAnalysisState("loading");
+          },
+          () => {
+            // An undecodable frame is normal; keep scanning.
           }
         );
 
-        const responseText = await res.text();
-        let data;
+        videoEl = document.querySelector(`#${READER_ID} video`);
 
-        try {
-          data = JSON.parse(responseText);
-        } catch {
-          if (!res.ok) {
-            const bodyPreview = responseText
-              .replace(/<[^>]*>/g, " ")
-              .replace(/\s+/g, " ")
-              .trim()
-              .slice(0, 250);
+        if (cancelled) return;
 
-            throw new Error(
-              bodyPreview
-                ? `Barcode request failed (HTTP ${res.status}): ${bodyPreview}`
-                : `Barcode request failed (HTTP ${res.status}): the server returned an empty response.`
-            );
-          }
-
-          throw new Error(
-            "The server returned an invalid response instead of JSON."
-          );
-        }
-
-        if (!res.ok) {
-          const message = data?.message || "Barcode request failed";
-          const detail = data?.error;
-
-          throw new Error(
-            `${message} (HTTP ${res.status})${detail ? `: ${detail}` : ""}`
-          );
-        }
-
-        if (!cancelled) {
-          setAnalysisResult(data);
-          setAnalysisState("success");
-        }
+        setCameraReady(true);
+        enableContinuousFocus(videoEl);
       } catch (err) {
-        console.error("Barcode analysis failed:", err);
+        if (cancelled) return;
 
-        if (!cancelled) {
-          setAnalysisState("error");
-          setError(
-            err instanceof TypeError && err.message === "Failed to fetch"
-              ? "Could not reach the barcode analysis server. The backend may be offline, or the request may be blocked by CORS."
-              : err?.message || "Barcode analysis failed for an unknown reason."
-          );
-        }
+        console.error("Camera failed to start:", err);
+        setError(describeCameraError(err));
+        setAnalysisState("error");
       }
-    }
-
-    analyze();
+    });
 
     return () => {
       cancelled = true;
+      teardownRef.current = run.then(() =>
+        scanner ? shutDownScanner(scanner, videoEl) : undefined
+      );
     };
+  }, [isScanning]);
+
+  // ------------------------------------------------------------
+  // Barcode analysis: runs once per decoded barcode.
+  // ------------------------------------------------------------
+  useEffect(() => {
+    if (!barcodeValue) return;
+
+    if (!API_BASE) {
+      setError(
+        "VITE_SERVER is not set, so the app doesn't know where the barcode server is."
+      );
+      setAnalysisState("error");
+      return;
+    }
+
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const data = await postBarcode(barcodeValue, controller.signal);
+
+        setAnalysisResult(data);
+        setAnalysisState("success");
+      } catch (err) {
+        if (controller.signal.aborted) return;
+
+        console.error("Barcode analysis failed:", err);
+
+        setError(
+          err instanceof TypeError && err.message === "Failed to fetch"
+            ? "Could not reach the barcode analysis server. The backend may be offline, or the request may be blocked by CORS."
+            : err?.message || "Barcode analysis failed for an unknown reason."
+        );
+        setAnalysisState("error");
+      }
+    })();
+
+    return () => controller.abort();
   }, [barcodeValue]);
 
   // ------------------------------------------------------------
-  // Helpers
+  // Actions
   // ------------------------------------------------------------
 
-  const stopScanner = () => {
-    // The camera effect's cleanup stops the Html5Qrcode instance.
-    setScannerActive(false);
+  // Back to a clean "ready" state for the current mode. For barcode mode
+  // this restarts the camera; for food mode it remounts FoodScanner.
+  const clearAnalysis = () => {
+    setBarcodeValue(null);
+    setAnalysisResult(null);
+    setAnalysisState("idle");
+    setError(null);
+  };
+
+  const selectMode = (nextMode) => {
+    clearAnalysis();
+    setMode(nextMode);
   };
 
   const reset = () => {
-    stopScanner();
-
+    clearAnalysis();
     setMode(null);
-    setBarcodeValue(null);
-    setError(null);
-    setAnalysisState("idle");
-    setAnalysisResult(null);
   };
 
   const handleAddToDashboard = () => {
@@ -204,10 +419,8 @@ useEffect(() => {
   const handleFoodAnalysisError = (err) => {
     console.error("Food analysis failed:", err);
 
+    setError(err?.message || "Something went wrong analyzing this photo.");
     setAnalysisState("error");
-    setError(
-      err?.message || "Something went wrong analyzing this photo."
-    );
   };
 
   // ------------------------------------------------------------
@@ -216,15 +429,10 @@ useEffect(() => {
 
   return (
     <div className="flex h-full w-full flex-col items-center justify-center gap-4 bg-(--bg-main) p-4">
-      {/* Scan selection screen */}
+      {/* Mode selection */}
       {mode === null && (
         <div className="mx-auto max-w-[380px] rounded-[22px] bg-(--bg-card) p-[14px]">
           <div className="rounded-2xl bg-(--bg-main) px-5 pb-[26px] pt-[30px] font-poppins text-(--text-main)">
-            <h2 className="absolute m-[-1px] h-px w-px overflow-hidden whitespace-nowrap border-0 p-0 [clip:rect(0,0,0,0)]">
-              Scan screen mockup: choose to scan a barcode or take a food photo
-              to log a meal
-            </h2>
-
             <p className="mb-1.5 text-[12px] font-semibold tracking-[0.08em] text-(--accent-coral)">
               Scan
             </p>
@@ -233,161 +441,35 @@ useEffect(() => {
               What are you logging?
             </h1>
 
-            {/* Barcode */}
             <button
-              onClick={() => {
-                setError(null);
-                setBarcodeValue(null);
-                setAnalysisState("idle");
-                setAnalysisResult(null);
-                setScannerActive(false);
-                setMode("barcode");
-              }}
-              className="mb-3 flex w-full cursor-pointer items-center gap-[14px] rounded-2xl border-0 bg-(--bg-card-subtle) p-4 text-left font-inherit"
+              type="button"
+              onClick={() => selectMode("barcode")}
+              className={`${MODE_CARD_CLASS} mb-3`}
             >
               <div className="relative flex h-[52px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-xl bg-(--bg-main)">
-                <svg width="32" height="32" viewBox="0 0 34 34">
-                  <rect
-                    x="2"
-                    y="4"
-                    width="2"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.55"
-                  />
-                  <rect
-                    x="6"
-                    y="4"
-                    width="1"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.4"
-                  />
-                  <rect
-                    x="9"
-                    y="4"
-                    width="3"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.6"
-                  />
-                  <rect
-                    x="14"
-                    y="4"
-                    width="1"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.35"
-                  />
-                  <rect
-                    x="17"
-                    y="4"
-                    width="2"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.55"
-                  />
-                  <rect
-                    x="21"
-                    y="4"
-                    width="1"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.4"
-                  />
-                  <rect
-                    x="24"
-                    y="4"
-                    width="3"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.6"
-                  />
-                  <rect
-                    x="29"
-                    y="4"
-                    width="1"
-                    height="26"
-                    fill="#1F2A24"
-                    opacity="0.4"
-                  />
-                </svg>
-
+                <BarcodeIcon />
                 <div className="absolute left-1 right-1 top-1 h-0.5 animate-[scanSweep_2.4s_ease-in-out_infinite] bg-(--accent-coral)" />
               </div>
 
               <div>
-                <p className="mb-0.5 text-[15px] font-semibold">
-                  Scan barcode
-                </p>
-
+                <p className="mb-0.5 text-[15px] font-semibold">Scan barcode</p>
                 <p className="text-[12.5px] text-(--text-muted)">
                   Packaged food with a label
                 </p>
               </div>
             </button>
 
-            {/* Food */}
             <button
-              onClick={() => setMode("food")}
-              className="flex w-full cursor-pointer items-center gap-[14px] rounded-2xl border-0 bg-(--bg-card-subtle) p-4 text-left font-inherit"
+              type="button"
+              onClick={() => selectMode("food")}
+              className={MODE_CARD_CLASS}
             >
               <div className="h-[52px] w-[52px] shrink-0 rounded-xl bg-(--bg-main)">
-                <svg
-                  width="52"
-                  height="52"
-                  viewBox="0 0 56 56"
-                  className="animate-[framePulse_2.4s_ease-in-out_infinite]"
-                >
-                  <path
-                    d="M14 16v-2a4 4 0 0 1 4-4h2"
-                    stroke="#E8735C"
-                    strokeWidth="2.5"
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-
-                  <path
-                    d="M42 16v-2a4 4 0 0 0-4-4h-2"
-                    stroke="#E8735C"
-                    strokeWidth="2.5"
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-
-                  <path
-                    d="M14 40v2a4 4 0 0 0 4 4h2"
-                    stroke="#E8735C"
-                    strokeWidth="2.5"
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-
-                  <path
-                    d="M42 40v2a4 4 0 0 1-4 4h-2"
-                    stroke="#E8735C"
-                    strokeWidth="2.5"
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-
-                  <circle
-                    cx="28"
-                    cy="28"
-                    r="7"
-                    fill="none"
-                    stroke="#1F2A24"
-                    strokeWidth="2"
-                    opacity="0.5"
-                  />
-                </svg>
+                <FrameIcon />
               </div>
 
               <div>
-                <p className="mb-0.5 text-[15px] font-semibold">
-                  Scan food
-                </p>
-
+                <p className="mb-0.5 text-[15px] font-semibold">Scan food</p>
                 <p className="text-[12.5px] text-(--text-muted)">
                   Homemade and plated meals
                 </p>
@@ -401,41 +483,28 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Barcode scanner */}
-      {mode === "barcode" && !barcodeValue && (
-        <div className="flex w-full max-w-sm flex-col items-center gap-3">
+      {/* Barcode camera (starts automatically, stops on the first result) */}
+      {isScanning && (
+        <div className="flex w-full max-w-[280px] flex-col items-center gap-3">
           <div
-            id={readerId}
-            className="w-full overflow-hidden rounded-md border border-black/10"
+            id={READER_ID}
+            className="min-h-[160px] w-full overflow-hidden rounded-xl border border-black/10 bg-(--bg-card)"
           />
 
-          <p className="font-poppins text-sm text-(--text-muted)">
-            {scannerActive
+          <p className="text-center font-poppins text-sm text-(--text-muted)">
+            {cameraReady
               ? "Point your camera at the barcode."
-              : "Press Start scanning to open your camera."}
+              : "Starting camera…"}
           </p>
 
-          <button
-            onClick={() => {
-              if (scannerActive) {
-                stopScanner();
-              } else {
-                setError(null);
-                setScannerActive(true);
-              }
-            }}
-            className="cursor-pointer rounded-md bg-(--accent-coral) px-4 py-2 font-poppins font-medium text-white"
-          >
-            {scannerActive ? "Stop scanning" : "Start scanning"}
-          </button>
-
-          {error && (
-            <p className="font-poppins text-sm text-red-600">
-              {error}
+          {cameraReady && (
+            <p className="text-center font-poppins text-xs text-(--text-muted)">
+              Hold it 15–25 cm away, steady and well lit.
             </p>
           )}
 
           <button
+            type="button"
             onClick={reset}
             className="cursor-pointer font-poppins text-sm underline"
           >
@@ -444,39 +513,19 @@ useEffect(() => {
         </div>
       )}
 
-      {/* Barcode loading */}
-      {mode === "barcode" &&
-        barcodeValue &&
-        analysisState === "loading" && (
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--bg-card-subtle) border-t-(--accent-coral)" />
+      {/* Barcode analysis in progress */}
+      {mode === "barcode" && analysisState === "loading" && (
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-(--bg-card-subtle) border-t-(--accent-coral)" />
 
-            <p className="font-poppins text-sm text-(--text-muted)">
-              Analyzing product…
-            </p>
-          </div>
-        )}
+          <p className="font-poppins text-sm text-(--text-muted)">
+            Analyzing product…
+          </p>
+        </div>
+      )}
 
-      {/* Barcode error */}
-      {mode === "barcode" &&
-        barcodeValue &&
-        analysisState === "error" && (
-          <div className="flex flex-col items-center gap-3 text-center">
-            <p className="font-poppins text-sm text-red-600">
-              {error || "Something went wrong analyzing this product."}
-            </p>
-
-            <button
-              onClick={reset}
-              className="cursor-pointer rounded-md bg-(--accent-coral) p-2 font-poppins font-medium text-white"
-            >
-              Try again
-            </button>
-          </div>
-        )}
-
-      {/* Food scanner */}
-      {mode === "food" && analysisState !== "success" && (
+      {/* Food scanner (unmounted on error/success so retry starts fresh) */}
+      {mode === "food" && analysisState === "idle" && (
         <FoodScanner
           onAnalysisComplete={handleFoodAnalysisComplete}
           onError={handleFoodAnalysisError}
@@ -484,27 +533,32 @@ useEffect(() => {
         />
       )}
 
+      {/* Errors, for both modes (camera, barcode request, food request) */}
+      {mode !== null && analysisState === "error" && (
+        <ErrorPanel
+          message={error || "Something went wrong. Please try again."}
+          onRetry={clearAnalysis}
+          onCancel={reset}
+        />
+      )}
+
       {/* Barcode result */}
-      {mode === "barcode" &&
-        analysisState === "success" &&
-        analysisResult && (
-          <ProductAnalysisView
-            result={analysisResult}
-            onClose={reset}
-            onAddToDashboard={handleAddToDashboard}
-          />
-        )}
+      {mode === "barcode" && analysisState === "success" && analysisResult && (
+        <ProductAnalysisView
+          result={analysisResult}
+          onClose={reset}
+          onAddToDashboard={handleAddToDashboard}
+        />
+      )}
 
       {/* Food result */}
-      {mode === "food" &&
-        analysisState === "success" &&
-        analysisResult && (
-          <FoodAnalysisView
-            result={analysisResult}
-            onClose={reset}
-            onAddToDashboard={handleAddToDashboard}
-          />
-        )}
+      {mode === "food" && analysisState === "success" && analysisResult && (
+        <FoodAnalysisView
+          result={analysisResult}
+          onClose={reset}
+          onAddToDashboard={handleAddToDashboard}
+        />
+      )}
     </div>
   );
 };
